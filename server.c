@@ -33,7 +33,7 @@ void server(int client_count, int req_fds[][2], int reply_fds[][2])
   int active_clients;     /* current count of clients; end server when 0 */
   int max_fds = 0;        /* must be one more than largest req_fd value  */
   int retval;             /* return value from select ()                 */
-  int found;              /* logical flag that a req_fd was identified   */
+  // int found;              /* logical flag that a req_fd was identified   */ REMOVED BECAUSE UNNECESSARY
   int reply;              /* counter value sent as a reply               */
   char request;           /* single-character command sent to server     */
   int i;
@@ -41,6 +41,7 @@ void server(int client_count, int req_fds[][2], int reply_fds[][2])
   /* initially clear the file descriptor set for active clients */
 
   FD_ZERO(&read_fds);
+  FD_ZERO(&query_fds);
 
   /* initialize for each client:            */
   /* - close unused ends of  pipes          */
@@ -50,10 +51,11 @@ void server(int client_count, int req_fds[][2], int reply_fds[][2])
 
   for (i = 0; i < client_count; i++)
   {
-    FD_SET(req_fds[i][0], &read_fds);
+    FD_SET(req_fds[i][READ_FD], &read_fds);
     close(req_fds[i][WRITE_FD]);
     close(reply_fds[i][READ_FD]);
     max_fds = req_fds[i][0];
+    counters[i] = 0;
     if (req_fds[i][0] > max_fds)
     {
       max_fds = reply_fds[i][0];
@@ -74,6 +76,9 @@ void server(int client_count, int req_fds[][2], int reply_fds[][2])
   /* start processing with all clients active and continue until 0; */
   /*   stop requests should decrement the count of active clients   */
 
+  timeout.tv_sec = 2;
+  timeout.tv_usec = 0;
+
   active_clients = client_count;
   reply = 0;
 
@@ -81,8 +86,7 @@ void server(int client_count, int req_fds[][2], int reply_fds[][2])
   while (active_clients)
   {
     query_fds = read_fds;
-    timeout.tv_sec = 2;
-    timeout.tv_usec = 0;
+
     retval = select(max_fds, &query_fds, NULL, NULL, &timeout);
 
     if (retval == -1)
@@ -92,39 +96,38 @@ void server(int client_count, int req_fds[][2], int reply_fds[][2])
     }
     else if (retval)
     {
-      // printf("locate, read, and process request...");
-      for (int i = 0; i < active_clients; i++)
+      for (i = 0; i < client_count; i++)
       {
-        if (FD_ISSET(req_fds[i][0], &read_fds))
+        if (FD_ISSET(req_fds[i][0], &query_fds))
         {
-          found = i;
-          // printf("\nfd %d in req_fds[%d][0]\n", req_fds[i][0], i);
           read(req_fds[i][0], &request, REQUEST_SZ);
           printf("message from client %d to server is %c\n", i, request);
 
           if (request == '+')
           {
-            client_count++;
-            reply = client_count;
+            counters[i]++;
+            reply = counters[i];
             write(reply_fds[i][1], (char *)&reply, REPLY_SZ);
-            // printf("This is the reply: %d\n", reply);
           }
           else if (request == '-')
           {
-            client_count--;
-            reply = client_count;
+            counters[i]--;
+            reply = counters[i];
             write(reply_fds[i][1], (char *)&reply, REPLY_SZ);
-            // printf("This is the reply: %d\n", reply);
           }
           else if (request == '!')
           {
-            active_clients = 0;
+
+            active_clients--;
+            FD_CLR(req_fds[i][READ_FD], &query_fds);
           }
           else
           {
-            reply = 0;
+            counters[i] = 0;
+            active_clients--;
+            reply = counters[i];
             write(reply_fds[i][1], (char *)&reply, REPLY_SZ);
-            // printf("This is the reply: %d\n", reply);
+            printf("message from client %d to server is %c\n", i, request);
           }
         }
       }
@@ -138,7 +141,6 @@ void server(int client_count, int req_fds[][2], int reply_fds[][2])
   /* close the other file descriptors */
   for (i = 0; i < client_count; i++)
   {
-    FD_CLR(req_fds[i][0], &read_fds);
     close(req_fds[i][READ_FD]);
     close(reply_fds[i][WRITE_FD]);
   }
